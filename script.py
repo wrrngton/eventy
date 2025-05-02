@@ -177,10 +177,6 @@ def form_and_send_events():
 
         inner_count += 1
 
-    with open("events-out.json", "w+", encoding="utf-8") as ef:
-        ef.write(json.dumps(accrued_events))
-
-
 def form_search_dicts(q_ID: str, hits: list, u_ID: str, text_query: str) -> dict:
     search_dict = {}
     hits_arr = [h["objectID"] for h in hits]
@@ -218,8 +214,6 @@ while count < num_searches:
     count += 1
 
     if count == num_searches:
-        with open("searches-out.json", "w+", encoding="utf-8") as sf:
-            sf.write(json.dumps(accrued_searches))
 
         print("finished running queries, now formulating events")
 
