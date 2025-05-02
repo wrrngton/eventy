@@ -55,8 +55,8 @@ num_filters = len(filters_list)
 # Apply weighting to top 10% of each list
 queries_top_10 = math.ceil(0.10 * num_queries)
 filters_top_10 = math.ceil(0.10 * num_filters)
-search_weights = [10] * queries_top_10 + [1] * (num_queries - queries_top_10)
-filter_weights = [10] * filters_top_10 + [1] * (num_filters - filters_top_10)
+search_weights = [10] * queries_top_10 + [5] * (num_queries - queries_top_10)
+filter_weights = [10] * filters_top_10 + [5] * (num_filters - filters_top_10)
 
 # Store all searches in this list
 accrued_searches = []
@@ -75,7 +75,7 @@ def perform_query(query: str, payload: dict) -> dict:
 
 def construct_query(type) -> dict:
     payload = {
-        # "getRankingInfo": True,
+        "analytics": True,
         "attributesToHighlight": [],
         "hitsPerPage": 100,
         "clickAnalytics": True,
@@ -103,6 +103,7 @@ def construct_query(type) -> dict:
 
 
 def form_and_send_events():
+    accrued_events = []
     random.shuffle(accrued_searches)
 
     click_every = int(math.ceil(100 / ctr))
@@ -120,7 +121,7 @@ def form_and_send_events():
 
         else:
 
-            if num_searches % click_every == 0:
+            if inner_count % click_every == 0:
                 hits_len = len(hits)
                 hits_top_10 = int(0.10 * hits_len)
                 hits_weights = [10] * hits_top_10 + [1] * (hits_len - hits_top_10)
@@ -137,6 +138,7 @@ def form_and_send_events():
                     "positions": [rand_id + 1],
                     "queryID": item["queryID"],
                 }
+                accrued_events.append(click_event)
 
                 insights.user(item["userToken"]).clicked_object_ids_after_search(
                     "click",
@@ -146,7 +148,7 @@ def form_and_send_events():
                     item["queryID"],
                 )
 
-            if num_searches % conv_every == 0:
+            if inner_count % conv_every == 0:
 
                 hits_len = len(hits)
                 hits_top_10 = int(0.10 * hits_len)
@@ -157,6 +159,15 @@ def form_and_send_events():
 
                 chosen_hit = hits[rand_id]
 
+                conv_event = {
+                    "eventName": "conversion",
+                    "indexName": algolia_index,
+                    "objectIDs": [chosen_hit],
+                    "queryID": item["queryID"],
+                }
+
+                accrued_events.append(conv_event)
+
                 insights.user(item["userToken"]).converted_object_ids_after_search(
                     "conversion",
                     algolia_index,
@@ -166,13 +177,17 @@ def form_and_send_events():
 
         inner_count += 1
 
+    with open("events-out.json", "w+", encoding="utf-8") as ef:
+        ef.write(json.dumps(accrued_events))
 
-def form_search_dicts(q_ID: str, hits=list, u_ID=str) -> dict:
+
+def form_search_dicts(q_ID: str, hits: list, u_ID: str, text_query: str) -> dict:
     search_dict = {}
     hits_arr = [h["objectID"] for h in hits]
     search_dict["hits"] = hits_arr
     search_dict["queryID"] = q_ID
     search_dict["userToken"] = u_ID
+    search_dict["query"] = text_query
 
     return search_dict
 
@@ -187,21 +202,27 @@ while count < num_searches:
         response = perform_query(query, payload)
         match = re.search(r"userToken=([0-9a-fA-F\-]{36})", response["params"])
         userT = match.group(1)
-        searches = form_search_dicts(response["queryID"], response["hits"], userT)
+        searches = form_search_dicts(
+            response["queryID"], response["hits"], userT, query
+        )
         accrued_searches.append(searches)
 
     else:
         payload, query = construct_query("text")
         response = perform_query(query, payload)
-        searches = form_search_dicts(response["queryID"], response["hits"], userT)
+        searches = form_search_dicts(
+            response["queryID"], response["hits"], userT, query
+        )
         accrued_searches.append(searches)
 
     count += 1
 
     if count == num_searches:
+        with open("searches-out.json", "w+", encoding="utf-8") as sf:
+            sf.write(json.dumps(accrued_searches))
+
         print("finished running queries, now formulating events")
 
         form_and_send_events()
 
-# with open("output.json", "w+", encoding="utf=8") as w:
-#     w.write(json.dumps(accrued_searches))
+        print("finished running events, check your dashboard debugger")
