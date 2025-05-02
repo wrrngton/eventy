@@ -1,0 +1,20 @@
+[app]
+
+app_id = ""
+public_key = ""
+index = ""
+
+[files]
+
+searches = "searches.json"
+filters = "filters.json"
+profiles = "profiles.json"
+
+[config]
+
+browse_freq = 3 # run a browse query every n query
+category_id = "categories"
+category_is_array = true
+num_searches = 10000
+ctr = 50
+cvr = 10
