@@ -246,8 +246,8 @@ def perform():
             no_results_count = form_and_send_events()
 
             print(
-                f"finished running events, check your dashboard debugger. {
-                    no_results_count} queries didn't return any results"
+                f"""finished running events, check your dashboard debugger. {
+                    no_results_count} queries didn't return any results"""
             )
 
 
@@ -264,8 +264,8 @@ def config():
 
     if not os.path.isdir(config_path):
         raise ValueError(
-            f"Provided path {
-                config_dir} is not a valid directory"
+            f"""Provided path {
+                config_dir} is not a valid directory"""
         )
 
     config = "config.toml"
