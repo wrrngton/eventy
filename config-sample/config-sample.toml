@@ -12,9 +12,12 @@ profiles = "profiles.json"
 
 [config]
 
-browse_freq = 3 # run a browse query every n query
-category_id = "categories"
+browse_freq = 3 
+pers_freq = 100 
+category_id = "categoryPageId"
 category_is_array = true
-num_searches = 10000
+price_attr = "price"
+currency = "EUR"
+num_searches = 100
 ctr = 50
 cvr = 10

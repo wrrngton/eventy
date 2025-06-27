@@ -1,108 +1,48 @@
+import argparse
 import json
 import math
 import os
 import random
 import re
+import sys
 import time
 import tomllib
 import urllib
 import uuid
-from typing import Optional
 
 from algoliasearch.insights_client import InsightsClient
 from algoliasearch.search_client import SearchClient
 
-processingTimeMS: Optional[int] = None
-
-
-# Get config info
-config = "config.toml"
-config_data = {}
-
-with open(config, "r", encoding="utf-8") as f:
-    data = tomllib.loads(f.read())
-    config_data = data
-
-app_id = config_data["app"]["app_id"]
-public_key = config_data["app"]["public_key"]
-algolia_index = config_data["app"]["index"]
-
-searches = config_data["files"]["searches"]
-filters = config_data["files"]["filters"]
-profiles = config_data["files"]["profiles"]
-
-browse_freq = config_data["config"]["browse_freq"]
-category_id = config_data["config"]["category_id"]
-category_is_array = config_data["config"]["category_is_array"]
-num_searches = config_data["config"]["num_searches"]
-ctr = config_data["config"]["ctr"]
-cvr = config_data["config"]["cvr"]
-
-# Load searches and filters into lists
-query_list = json.loads(
-    open(os.path.join("configs", searches), "r", encoding="utf-8").read()
-)
-random.shuffle(query_list)
-filters_list = json.loads(
-    open(os.path.join("configs", filters), "r", encoding="utf-8").read()
-)
-
-# List lengths
-num_queries = len(query_list)
-num_filters = len(filters_list)
-
-
-# Apply weighting to top 10% of each list
-queries_top_10 = math.ceil(0.10 * num_queries)
-filters_top_10 = math.ceil(0.10 * num_filters)
-search_weights = [10] * queries_top_10 + [5] * (num_queries - queries_top_10)
-filter_weights = [10] * filters_top_10 + [5] * (num_filters - filters_top_10)
-
-# Store all searches in this list
-accrued_searches = []
+app_config = {}
+count = 0
 
 # Algolia
-client = SearchClient.create(app_id, public_key)
-index = client.init_index(algolia_index)
+app = {}
+index = {}
+insights = {}
+accrued_searches = []
 
-insights = InsightsClient.create(app_id, public_key)
+def init_algolia():
+    app_id = app_config["app"]["app_id"]
+    public_key = app_config["app"]["public_key"]
+    algolia_index = app_config["app"]["index"]
 
+    client = SearchClient.create(app_id, public_key)
+    index = client.init_index(algolia_index)
+    insights = InsightsClient.create(app_id, public_key)
+    return client, index, insights
 
 def perform_query(query: str, payload: dict) -> dict:
     res = index.search(query, payload)
     return res
 
-
-def construct_query(type) -> dict:
-    payload = {
-        "analytics": True,
-        "attributesToHighlight": [],
-        "hitsPerPage": 100,
-        "clickAnalytics": True,
-        "attributesToRetrieve": ["objectID"],
-        "userToken": uuid.uuid4(),
-    }
-
-    query = ""
-
-    if type == "browse":
-        random_index = random.choices(
-            list(range(num_filters)), weights=filter_weights, k=1
-        )[0]
-        cat_value = filters_list[random_index]
-        payload["filters"] = f"{category_id}:'{cat_value}'"
-
-    else:
-        random_index = random.choices(
-            list(range(num_filters)), weights=filter_weights, k=1
-        )[0]
-        text_value = query_list[random_index]
-        query = text_value
-
-    return payload, query
-
-
 def form_and_send_events():
+    global insights
+    ctr = app_config["config"]["ctr"]
+    cvr = app_config["config"]["cvr"]
+    num_searches = app_config["config"]["num_searches"] 
+    algolia_index = app_config["app"]["index"]
+
     accrued_events = []
     random.shuffle(accrued_searches)
 
@@ -115,12 +55,11 @@ def form_and_send_events():
 
         item = accrued_searches[inner_count]
         hits = item["hits"]
-
+        
         if not item["hits"]:
             print("no hits")
 
         else:
-
             if inner_count % click_every == 0:
                 hits_len = len(hits)
                 hits_top_10 = int(0.10 * hits_len)
@@ -168,7 +107,7 @@ def form_and_send_events():
 
                 accrued_events.append(conv_event)
 
-                insights.user(item["userToken"]).converted_object_ids_after_search(
+                insights.user(item["userToken"]).purchased_object_ids_after_search(
                     "conversion",
                     algolia_index,
                     [chosen_hit],
@@ -176,6 +115,8 @@ def form_and_send_events():
                 )
 
         inner_count += 1
+        print(inner_count, num_searches)
+
 
 def form_search_dicts(q_ID: str, hits: list, u_ID: str, text_query: str) -> dict:
     search_dict = {}
@@ -187,36 +128,175 @@ def form_search_dicts(q_ID: str, hits: list, u_ID: str, text_query: str) -> dict
 
     return search_dict
 
+def construct_param_dict(params):
+    q_arr = params.split("&")
+    new_obj = {}
+    for item in q_arr:
+        c = item.split("=")
+        if len(c) == 1:
+            continue
+        new_obj[c[0]] = c[1]
+    return new_obj
 
-# Perform searches
-count = 0
+def construct_query(type, search_count) -> dict:
+    pers_freq = app_config["config"]["pers_freq"]
+    num_profiles = len(app_config["profiles"])
+    perso_list = app_config["profiles"]
+    filters_list = app_config["filters"]
+    query_list = app_config["searches"]
+    num_filters = len(app_config["filters"])
+    num_queries = len(app_config["searches"])
+    queries_top_10 = math.ceil(0.10 * num_queries)
+    filters_top_10 = math.ceil(0.10 * num_filters)
+    search_weights = [10] * queries_top_10 + [5] * (num_queries - queries_top_10)
+    filter_weights = [10] * filters_top_10 + [5] * (num_filters - filters_top_10)
+    category_id = app_config["config"]["category_id"]
 
-while count < num_searches:
+    token = uuid.uuid4()
+    filter = ""
 
-    if count % browse_freq == 0:
-        payload, query = construct_query("browse")
-        response = perform_query(query, payload)
-        match = re.search(r"userToken=([0-9a-fA-F\-]{36})", response["params"])
-        userT = match.group(1)
-        searches = form_search_dicts(
-            response["queryID"], response["hits"], userT, query
-        )
-        accrued_searches.append(searches)
+    if search_count % pers_freq == 0:
+        random_int = random.randint(0, num_profiles - 1)
+        random_user = perso_list[random_int]
+        token = random_user["userToken"]
+
+    if token == "348291":
+        filter = "348291"
+
+    if token == "472910":
+        filter = "472910"
+
+    payload = {
+        "analytics": True,
+        "attributesToHighlight": [],
+        "hitsPerPage": 100,
+        "clickAnalytics": True,
+        "attributesToRetrieve": ["objectID"],
+        "userToken": token,
+        "analyticsTags": [token] if token == "472910" or "348291" else [],
+        "filters": f"visible_by:{filter}" if filter != "" else "",
+    }
+
+    query = ""
+
+    if type == "browse":
+        random_index = random.choices(
+            list(range(num_filters)), weights=filter_weights, k=1
+        )[0]
+        cat_value = filters_list[random_index]
+        payload["filters"] = f"{category_id}:'{cat_value}'"
 
     else:
-        payload, query = construct_query("text")
-        response = perform_query(query, payload)
-        searches = form_search_dicts(
-            response["queryID"], response["hits"], userT, query
+        random_index = random.choices(
+            list(range(num_queries)), weights=search_weights, k=1
+        )[0]
+        text_value = query_list[random_index]
+        query = text_value
+
+    return payload, query
+
+
+def perform():
+    global count
+    num_searches = app_config["config"]["num_searches"]
+    browse_freq = app_config["config"]["browse_freq"]
+
+    while count < num_searches:
+
+        if count == 0:
+            print("running queries...")
+
+        if count % browse_freq == 0:
+            payload, query = construct_query("browse", count)
+            response = perform_query(query, payload)
+            param_dict = construct_param_dict(response["params"])
+            userT = param_dict["userToken"]
+            searches = form_search_dicts(
+                response["queryID"], response["hits"], userT, query
+            )
+            accrued_searches.append(searches)
+
+        else:
+            payload, query = construct_query("text", count)
+            response = perform_query(query, payload)
+            param_dict = construct_param_dict(response["params"])
+            userT = param_dict["userToken"]
+            searches = form_search_dicts(
+                response["queryID"], response["hits"], userT, query
+            )
+            accrued_searches.append(searches)
+
+        count += 1
+
+        if count == num_searches:
+
+            print("finished running queries, now formulating events")
+
+            form_and_send_events()
+
+            print("finished running events, check your dashboard debugger")
+
+
+def config():
+    parser = argparse.ArgumentParser(
+        description="Run script with a config directory.")
+    parser.add_argument(
+        "--config-dir", type=str, required=True, help="Path to directory"
+    )
+
+    args = parser.parse_args()
+    config_dir = args.config_dir
+    config_path = os.path.join("configs", config_dir)
+
+    if not os.path.isdir(config_path):
+        raise ValueError(
+            f"Provided path {
+                config_dir} is not a valid directory"
         )
-        accrued_searches.append(searches)
 
-    count += 1
+    config = "config.toml"
+    config_data = {}
 
-    if count == num_searches:
+    with open(os.path.join(config_path, config), "r", encoding="utf-8") as f:
+        data = tomllib.loads(f.read())
+        config_data = data
 
-        print("finished running queries, now formulating events")
+    searches = config_data["files"]["searches"]
+    filters = config_data["files"]["filters"]
+    profiles = config_data["files"]["profiles"]
 
-        form_and_send_events()
+    query_list = json.loads(
+        open(os.path.join(config_path, searches), "r", encoding="utf-8").read()
+    )
 
-        print("finished running events, check your dashboard debugger")
+    random.shuffle(query_list)
+
+    filters_list = json.loads(
+        open(os.path.join(config_path, filters), "r", encoding="utf-8").read()
+    )
+
+    perso_list = json.loads(
+        open(os.path.join(config_path, profiles), "r", encoding="utf-8").read()
+    )
+
+    config_data["searches"] = query_list
+    config_data["filters"] = filters_list
+    config_data["profiles"] = perso_list
+
+    return config_data
+
+
+def main():
+    global app_config
+    global app
+    global index
+    global insights
+
+    app_config = config()
+    app, index, insights = init_algolia()
+
+    perform()
+
+
+if __name__ == "__main__":
+    main()
