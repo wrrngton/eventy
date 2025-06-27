@@ -6,7 +6,7 @@ import random
 import re
 import sys
 import time
-import tomllib
+import tomli as tomllib
 import urllib
 import uuid
 
