@@ -4,6 +4,20 @@ Send synthetic events to an Algolia index for the purposes of demonstrating feat
 
 It uses a weighted distribution to prevent skewed simulations.
 
+## Installation and use
+
+Install dependencies:
+```console
+pip install -r requirements.txt
+```
+
+Run script:
+```console
+python3 script.py --config-dir "manufacturing"
+```
+
+`--config-dir` represents the directory of each config, as per below.
+
 ## Configuration
 
 A configuration is a set of instructions and data used to run searches and events on a specific Algolia index. 
@@ -28,3 +42,5 @@ To do this you'll need to run a cronjob that pings the app and pass the director
 ```console
 python3 script.py --config-dir "manufacturing"
 ```
+
+A sample shell script to achieve this is also included. This is helpful to activate the Python virtual environment before running the script.
