@@ -22,6 +22,7 @@ index = {}
 insights = {}
 accrued_searches = []
 
+
 def init_algolia():
     app_id = app_config["app"]["app_id"]
     public_key = app_config["app"]["public_key"]
@@ -32,18 +33,21 @@ def init_algolia():
     insights = InsightsClient.create(app_id, public_key)
     return client, index, insights
 
+
 def perform_query(query: str, payload: dict) -> dict:
     res = index.search(query, payload)
     return res
+
 
 def form_and_send_events():
     global insights
     ctr = app_config["config"]["ctr"]
     cvr = app_config["config"]["cvr"]
-    num_searches = app_config["config"]["num_searches"] 
+    num_searches = app_config["config"]["num_searches"]
     algolia_index = app_config["app"]["index"]
 
     accrued_events = []
+    no_result_count = 0
     random.shuffle(accrued_searches)
 
     click_every = int(math.ceil(100 / ctr))
@@ -55,15 +59,16 @@ def form_and_send_events():
 
         item = accrued_searches[inner_count]
         hits = item["hits"]
-        
+
         if not item["hits"]:
-            print("no hits")
+            no_result_count = no_result_count + 1
 
         else:
             if inner_count % click_every == 0:
                 hits_len = len(hits)
                 hits_top_10 = int(0.10 * hits_len)
-                hits_weights = [10] * hits_top_10 + [1] * (hits_len - hits_top_10)
+                hits_weights = [10] * hits_top_10 + \
+                    [1] * (hits_len - hits_top_10)
                 rand_id = random.choices(
                     list(range(hits_len)), weights=hits_weights, k=1
                 )[0]
@@ -91,7 +96,8 @@ def form_and_send_events():
 
                 hits_len = len(hits)
                 hits_top_10 = int(0.10 * hits_len)
-                hits_weights = [10] * hits_top_10 + [1] * (hits_len - hits_top_10)
+                hits_weights = [10] * hits_top_10 + \
+                    [1] * (hits_len - hits_top_10)
                 rand_id = random.choices(
                     list(range(hits_len)), weights=hits_weights, k=1
                 )[0]
@@ -107,7 +113,7 @@ def form_and_send_events():
 
                 accrued_events.append(conv_event)
 
-                insights.user(item["userToken"]).purchased_object_ids_after_search(
+                insights.user(item["userToken"]).converted_object_ids_after_search(
                     "conversion",
                     algolia_index,
                     [chosen_hit],
@@ -115,7 +121,8 @@ def form_and_send_events():
                 )
 
         inner_count += 1
-        print(inner_count, num_searches)
+
+    return no_result_count
 
 
 def form_search_dicts(q_ID: str, hits: list, u_ID: str, text_query: str) -> dict:
@@ -128,6 +135,7 @@ def form_search_dicts(q_ID: str, hits: list, u_ID: str, text_query: str) -> dict
 
     return search_dict
 
+
 def construct_param_dict(params):
     q_arr = params.split("&")
     new_obj = {}
@@ -137,6 +145,7 @@ def construct_param_dict(params):
             continue
         new_obj[c[0]] = c[1]
     return new_obj
+
 
 def construct_query(type, search_count) -> dict:
     pers_freq = app_config["config"]["pers_freq"]
@@ -148,8 +157,10 @@ def construct_query(type, search_count) -> dict:
     num_queries = len(app_config["searches"])
     queries_top_10 = math.ceil(0.10 * num_queries)
     filters_top_10 = math.ceil(0.10 * num_filters)
-    search_weights = [10] * queries_top_10 + [5] * (num_queries - queries_top_10)
-    filter_weights = [10] * filters_top_10 + [5] * (num_filters - filters_top_10)
+    search_weights = [10] * queries_top_10 + \
+        [5] * (num_queries - queries_top_10)
+    filter_weights = [10] * filters_top_10 + \
+        [5] * (num_filters - filters_top_10)
     category_id = app_config["config"]["category_id"]
 
     token = uuid.uuid4()
@@ -232,9 +243,12 @@ def perform():
 
             print("finished running queries, now formulating events")
 
-            form_and_send_events()
+            no_results_count = form_and_send_events()
 
-            print("finished running events, check your dashboard debugger")
+            print(
+                f"finished running events, check your dashboard debugger. {
+                    no_results_count} queries didn't return any results"
+            )
 
 
 def config():
