@@ -6,19 +6,18 @@ import random
 import re
 import sys
 import time
-import tomli as tomllib
 import urllib
 import uuid
 
-from algoliasearch.insights_client import InsightsClient
-from algoliasearch.search_client import SearchClient
+import tomli as tomllib
+from algoliasearch.insights.client import InsightsClientSync
+from algoliasearch.search.client import SearchClientSync
 
 app_config = {}
 count = 0
 
 # Algolia
 app = {}
-index = {}
 insights = {}
 accrued_searches = []
 
@@ -26,16 +25,15 @@ accrued_searches = []
 def init_algolia():
     app_id = app_config["app"]["app_id"]
     public_key = app_config["app"]["public_key"]
-    algolia_index = app_config["app"]["index"]
 
-    client = SearchClient.create(app_id, public_key)
-    index = client.init_index(algolia_index)
-    insights = InsightsClient.create(app_id, public_key)
-    return client, index, insights
+    client = SearchClientSync(app_id, public_key)
+    insights = InsightsClientSync(app_id, public_key)
+    return client, insights
 
 
 def perform_query(query: str, payload: dict) -> dict:
-    res = index.search(query, payload)
+    index = app_config["app"]["index"]
+    res = app.search_single_index(index_name=index, search_params=payload)
     return res
 
 
@@ -67,8 +65,7 @@ def form_and_send_events():
             if inner_count % click_every == 0:
                 hits_len = len(hits)
                 hits_top_10 = int(0.10 * hits_len)
-                hits_weights = [10] * hits_top_10 + \
-                    [1] * (hits_len - hits_top_10)
+                hits_weights = [10] * hits_top_10 + [1] * (hits_len - hits_top_10)
                 rand_id = random.choices(
                     list(range(hits_len)), weights=hits_weights, k=1
                 )[0]
@@ -76,28 +73,21 @@ def form_and_send_events():
                 chosen_hit = hits[rand_id]
 
                 click_event = {
-                    "eventName": "click",
-                    "indexName": algolia_index,
-                    "objectIDs": [chosen_hit],
+                    "eventName": "items clicked",
+                    "eventType": "click",
+                    "index": algolia_index,
+                    "objectIDs": [chosen_hit["objectID"]],
                     "positions": [rand_id + 1],
                     "queryID": item["queryID"],
+                    "userToken": item["userToken"],
                 }
                 accrued_events.append(click_event)
-
-                insights.user(item["userToken"]).clicked_object_ids_after_search(
-                    "click",
-                    algolia_index,
-                    [chosen_hit],
-                    [rand_id + 1],
-                    item["queryID"],
-                )
 
             if inner_count % conv_every == 0:
 
                 hits_len = len(hits)
                 hits_top_10 = int(0.10 * hits_len)
-                hits_weights = [10] * hits_top_10 + \
-                    [1] * (hits_len - hits_top_10)
+                hits_weights = [10] * hits_top_10 + [1] * (hits_len - hits_top_10)
                 rand_id = random.choices(
                     list(range(hits_len)), weights=hits_weights, k=1
                 )[0]
@@ -105,33 +95,60 @@ def form_and_send_events():
                 chosen_hit = hits[rand_id]
 
                 conv_event = {
-                    "eventName": "conversion",
-                    "indexName": algolia_index,
-                    "objectIDs": [chosen_hit],
+                    "eventName": "items purchased",
+                    "eventType": "conversion",
+                    "eventSubType": "purchase",
+                    "index": algolia_index,
+                    "objectIDs": [chosen_hit["objectID"]],
                     "queryID": item["queryID"],
+                    "userToken": item["userToken"],
+                    "objectData": [
+                        {
+                            "price": float(chosen_hit["price"]),
+                            "quantity": 1
+                        }
+                    ],
+                    "value": float(chosen_hit["price"]),
+                    "currency": app_config["config"]["currency"]
                 }
 
                 accrued_events.append(conv_event)
 
-                insights.user(item["userToken"]).converted_object_ids_after_search(
-                    "conversion",
-                    algolia_index,
-                    [chosen_hit],
-                    item["queryID"],
-                )
-
         inner_count += 1
+
+    chunk_size = 10
+    chunked_arr = [
+        accrued_events[i : i + chunk_size]
+        for i in range(0, len(accrued_events), chunk_size)
+    ]
+
+    for arr in chunked_arr:
+        insights.push_events(insights_events={"events": arr})
 
     return no_result_count
 
 
 def form_search_dicts(q_ID: str, hits: list, u_ID: str, text_query: str) -> dict:
+    price_attr = app_config["config"]["price_attr"]
+    hits_arr = []
     search_dict = {}
-    hits_arr = [h["objectID"] for h in hits]
+
+    if "." in price_attr:
+        x = price_attr.split(".")
+        atty = x[0]
+        nest = x[1]
+        hits_arr = [
+            {"objectID": h.object_id, "price": getattr(h, atty)[nest]} for h in hits
+        ]
+
+    else:
+        hits_arr = [{"objectID": h.object_id, "price": h.price_attr} for h in hits]
+
     search_dict["hits"] = hits_arr
     search_dict["queryID"] = q_ID
     search_dict["userToken"] = u_ID
     search_dict["query"] = text_query
+
 
     return search_dict
 
@@ -157,35 +174,35 @@ def construct_query(type, search_count) -> dict:
     num_queries = len(app_config["searches"])
     queries_top_10 = math.ceil(0.10 * num_queries)
     filters_top_10 = math.ceil(0.10 * num_filters)
-    search_weights = [10] * queries_top_10 + \
-        [5] * (num_queries - queries_top_10)
-    filter_weights = [10] * filters_top_10 + \
-        [5] * (num_filters - filters_top_10)
+    search_weights = [10] * queries_top_10 + [5] * (num_queries - queries_top_10)
+    filter_weights = [10] * filters_top_10 + [5] * (num_filters - filters_top_10)
     category_id = app_config["config"]["category_id"]
+    price_attr = app_config["config"]["price_attr"]
 
     token = uuid.uuid4()
     filter = ""
+    eligible_analytics_tags = ["mobile", "desktop", "ios", "android"]
+    analytics_tags = [
+        eligible_analytics_tags[random.randint(0, len(eligible_analytics_tags) - 1)],
+    ]
 
     if search_count % pers_freq == 0:
         random_int = random.randint(0, num_profiles - 1)
         random_user = perso_list[random_int]
         token = random_user["userToken"]
 
-    if token == "348291":
-        filter = "348291"
-
-    if token == "472910":
-        filter = "472910"
+    for user in perso_list:
+        if token == user["userToken"]:
+            analytics_tags.append(f"user: {token}")
 
     payload = {
         "analytics": True,
         "attributesToHighlight": [],
         "hitsPerPage": 100,
         "clickAnalytics": True,
-        "attributesToRetrieve": ["objectID"],
-        "userToken": token,
-        "analyticsTags": [token] if token == "472910" or "348291" else [],
-        "filters": f"visible_by:{filter}" if filter != "" else "",
+        "attributesToRetrieve": ["objectID", price_attr],
+        "userToken": str(token),
+        "analyticsTags": analytics_tags,
     }
 
     query = ""
@@ -220,21 +237,17 @@ def perform():
         if count % browse_freq == 0:
             payload, query = construct_query("browse", count)
             response = perform_query(query, payload)
-            param_dict = construct_param_dict(response["params"])
+            param_dict = construct_param_dict(response.params)
             userT = param_dict["userToken"]
-            searches = form_search_dicts(
-                response["queryID"], response["hits"], userT, query
-            )
+            searches = form_search_dicts(response.query_id, response.hits, userT, query)
             accrued_searches.append(searches)
 
         else:
             payload, query = construct_query("text", count)
             response = perform_query(query, payload)
-            param_dict = construct_param_dict(response["params"])
+            param_dict = construct_param_dict(response.params)
             userT = param_dict["userToken"]
-            searches = form_search_dicts(
-                response["queryID"], response["hits"], userT, query
-            )
+            searches = form_search_dicts(response.query_id, response.hits, userT, query)
             accrued_searches.append(searches)
 
         count += 1
@@ -252,8 +265,7 @@ def perform():
 
 
 def config():
-    parser = argparse.ArgumentParser(
-        description="Run script with a config directory.")
+    parser = argparse.ArgumentParser(description="Run script with a config directory.")
     parser.add_argument(
         "--config-dir", type=str, required=True, help="Path to directory"
     )
@@ -303,11 +315,10 @@ def config():
 def main():
     global app_config
     global app
-    global index
     global insights
 
     app_config = config()
-    app, index, insights = init_algolia()
+    app, insights = init_algolia()
 
     perform()
 
