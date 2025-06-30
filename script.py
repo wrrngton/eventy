@@ -39,6 +39,7 @@ def perform_query(query: str, payload: dict) -> dict:
 
 def form_and_send_events():
     global insights
+    price_attr = app_config["config"]["price_attr"]
     ctr = app_config["config"]["ctr"]
     cvr = app_config["config"]["cvr"]
     num_searches = app_config["config"]["num_searches"]
@@ -93,24 +94,33 @@ def form_and_send_events():
                 )[0]
 
                 chosen_hit = hits[rand_id]
+                conv_event = {}
 
-                conv_event = {
-                    "eventName": "items purchased",
-                    "eventType": "conversion",
-                    "eventSubType": "purchase",
-                    "index": algolia_index,
-                    "objectIDs": [chosen_hit["objectID"]],
-                    "queryID": item["queryID"],
-                    "userToken": item["userToken"],
-                    "objectData": [
-                        {
-                            "price": float(chosen_hit["price"]),
-                            "quantity": 1
-                        }
-                    ],
-                    "value": float(chosen_hit["price"]),
-                    "currency": app_config["config"]["currency"]
-                }
+                if price_attr and chosen_hit.get("price") is not None:
+                    conv_event = {
+                        "eventName": "items purchased",
+                        "eventType": "conversion",
+                        "eventSubType": "purchase",
+                        "index": algolia_index,
+                        "objectIDs": [chosen_hit["objectID"]],
+                        "queryID": item["queryID"],
+                        "userToken": item["userToken"],
+                        "objectData": [
+                            {"price": float(chosen_hit["price"]), "quantity": 1}
+                        ],
+                        "value": float(chosen_hit["price"]),
+                        "currency": app_config["config"]["currency"],
+                    }
+
+                else:
+                    conv_event = {
+                        "eventName": "item converted",
+                        "eventType": "conversion",
+                        "index": algolia_index,
+                        "objectIDs": [chosen_hit["objectID"]],
+                        "queryID": item["queryID"],
+                        "userToken": item["userToken"],
+                    }
 
                 accrued_events.append(conv_event)
 
@@ -133,7 +143,12 @@ def form_search_dicts(q_ID: str, hits: list, u_ID: str, text_query: str) -> dict
     hits_arr = []
     search_dict = {}
 
-    if "." in price_attr:
+    if not price_attr:
+        hits_arr = [
+            {"objectID": h.object_id} for h in hits
+        ]
+
+    elif "." in price_attr:
         x = price_attr.split(".")
         atty = x[0]
         nest = x[1]
@@ -142,13 +157,14 @@ def form_search_dicts(q_ID: str, hits: list, u_ID: str, text_query: str) -> dict
         ]
 
     else:
-        hits_arr = [{"objectID": h.object_id, "price": h.price_attr} for h in hits]
+        hits_arr = [
+            {"objectID": h.object_id, "price": getattr(h, price_attr)} for h in hits
+        ]
 
     search_dict["hits"] = hits_arr
     search_dict["queryID"] = q_ID
     search_dict["userToken"] = u_ID
     search_dict["query"] = text_query
-
 
     return search_dict
 
@@ -200,7 +216,9 @@ def construct_query(type, search_count) -> dict:
         "attributesToHighlight": [],
         "hitsPerPage": 100,
         "clickAnalytics": True,
-        "attributesToRetrieve": ["objectID", price_attr],
+        "attributesToRetrieve": (
+            ["objectID", price_attr] if price_attr else ["objectID"]
+        ),
         "userToken": str(token),
         "analyticsTags": analytics_tags,
     }
