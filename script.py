@@ -31,7 +31,7 @@ def init_algolia():
     return client, insights
 
 
-def perform_query(query: str, payload: dict) -> dict:
+def perform_query(payload: dict) -> dict:
     index = app_config["app"]["index"]
     res = app.search_single_index(index_name=index, search_params=payload)
     return res
@@ -166,6 +166,7 @@ def form_search_dicts(q_ID: str, hits: list, u_ID: str, text_query: str) -> dict
     search_dict["userToken"] = u_ID
     search_dict["query"] = text_query
 
+
     return search_dict
 
 
@@ -223,23 +224,22 @@ def construct_query(type, search_count) -> dict:
         "analyticsTags": analytics_tags,
     }
 
-    query = ""
-
     if type == "browse":
         random_index = random.choices(
             list(range(num_filters)), weights=filter_weights, k=1
         )[0]
         cat_value = filters_list[random_index]
         payload["filters"] = f"{category_id}:'{cat_value}'"
+        payload["query"] = ""
 
     else:
         random_index = random.choices(
             list(range(num_queries)), weights=search_weights, k=1
         )[0]
         text_value = query_list[random_index]
-        query = text_value
+        payload["query"] = text_value
 
-    return payload, query
+    return payload
 
 
 def perform():
@@ -253,19 +253,19 @@ def perform():
             print("running queries...")
 
         if count % browse_freq == 0:
-            payload, query = construct_query("browse", count)
-            response = perform_query(query, payload)
+            payload = construct_query("browse", count)
+            response = perform_query(payload)
             param_dict = construct_param_dict(response.params)
             userT = param_dict["userToken"]
-            searches = form_search_dicts(response.query_id, response.hits, userT, query)
+            searches = form_search_dicts(response.query_id, response.hits, userT, response.query)
             accrued_searches.append(searches)
 
         else:
-            payload, query = construct_query("text", count)
-            response = perform_query(query, payload)
+            payload = construct_query("text", count)
+            response = perform_query(payload)
             param_dict = construct_param_dict(response.params)
             userT = param_dict["userToken"]
-            searches = form_search_dicts(response.query_id, response.hits, userT, query)
+            searches = form_search_dicts(response.query_id, response.hits, userT, response.query)
             accrued_searches.append(searches)
 
         count += 1
